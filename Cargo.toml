@@ -1,0 +1,10 @@
+[package]
+name = "stupid-see"
+version = "0.1.0"
+authors = ["dzy <daizy15@mails.tsinghua.edu.cn>"]
+edition = "2018"
+
+[dependencies]
+z3 = "0.3.2"
+log = "0.4.0"
+env_logger = "0.6.1"
