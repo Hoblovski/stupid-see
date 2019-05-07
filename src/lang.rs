@@ -1,3 +1,8 @@
+/// The core languages executed by the SEE. Like LLVM IR for KLEE.
+/// A simple structured imperivative language.
+///
+/// To symbolically execute other languages, translate them into this small core language.
+
 use std::rc::{Rc, Weak};
 use std::boxed::Box;
 use std::cell::RefCell;
@@ -95,29 +100,67 @@ impl<'stmt> Stmt<'stmt> {
     }
 }
 
-fn check_nontop_stmt_is_well_formed(s: &Rc<Stmt>) {
-    let children = s.children.borrow();
-    for (i, c) in children.iter().enumerate() {
-        assert!(Rc::ptr_eq(&c.parent.upgrade().unwrap(), &s));
-        check_nontop_stmt_is_well_formed(c);
-        if i+1 == children.len() {
-            assert!(c.next_sib.upgrade().is_none());
-        } else {
-            assert!(Rc::ptr_eq(
-                &c.next_sib.upgrade().unwrap(), &children[i+1]));
-        }
-    }
-}
-
-pub fn check_stmt_is_well_formed(top: &Rc<Stmt>) {
-    assert!(top.parent.upgrade().is_none());
-    assert!(top.next_sib.upgrade().is_none());
-    check_nontop_stmt_is_well_formed(top);
-    println!("check_stmt_is_well_formed passed")
-}
-
 #[derive(Debug)]
 pub struct Function<'stmt> {
     pub params: Vec<Variable>,
     pub body: Rc<Stmt<'stmt>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn check_nontop_stmt_is_well_formed(s: &Rc<Stmt>) {
+        let children = s.children.borrow();
+        for (i, c) in children.iter().enumerate() {
+            assert!(Rc::ptr_eq(&c.parent.upgrade().unwrap(), &s));
+            check_nontop_stmt_is_well_formed(c);
+            if i+1 == children.len() {
+                assert!(c.next_sib.upgrade().is_none());
+            } else {
+                assert!(Rc::ptr_eq(
+                        &c.next_sib.upgrade().unwrap(), &children[i+1]));
+            }
+        }
+    }
+
+    pub fn check_stmt_is_well_formed(top: &Rc<Stmt>) {
+        assert!(top.parent.upgrade().is_none());
+        assert!(top.next_sib.upgrade().is_none());
+        check_nontop_stmt_is_well_formed(top);
+        println!("check_stmt_is_well_formed passed")
+    }
+
+    #[test]
+    fn well_formedness() {
+        use super::NatExpr as e;
+        use super::StmtKind::*;
+        let sk = Block(vec![
+                       Assign(Variable("x"), e::konst(3)),
+                       Skip,
+                       Assign(Variable("x"), e::add(e::konst(3), e::konst(4))),
+                       Assign(Variable("x"), e::mul(e::var("x"), e::var("x"))),
+                       Block(vec![
+                             Assign(Variable("x"), e::mul(e::var("x"), e::var("x"))),
+                             Assign(Variable("y"), e::konst(2)),
+                             Block(vec![
+                                   Assign(Variable("x"), e::mul(e::var("x"), e::var("x"))),
+                                   Assign(Variable("y"), e::konst(2)),
+                                   Block(vec![
+                                         Assign(Variable("x"), e::mul(e::var("x"), e::var("x"))),
+                                         Assign(Variable("y"), e::konst(2)),
+                                         Assign(Variable("y"), e::add(e::mul(e::var("y"), e::konst(13)), e::konst(3))),
+                                   ]),
+                                   Assign(Variable("y"), e::add(e::mul(e::var("y"), e::konst(13)), e::konst(3))),
+                             ]),
+                             Assign(Variable("y"), e::add(e::mul(e::var("y"), e::konst(13)), e::konst(3))),
+                       ]),
+                       Fail,
+                       ]);
+        let simple_fun = Function {
+            params: vec![Variable("x"), Variable("y")],
+            body: Stmt::make(&sk, Weak::new(), Weak::new())
+        };
+        check_stmt_is_well_formed(&simple_fun.body);
+    }
 }
