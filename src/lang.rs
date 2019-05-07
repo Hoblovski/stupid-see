@@ -35,14 +35,14 @@ pub enum StmtKind {
 
 /// Structured statements -- 'linked'.
 #[derive(Debug)]
-pub struct Stmt<'a> {
-    pub(crate) parent: Weak<Stmt<'a>>,
-    pub(crate) next_sib: Weak<Stmt<'a>>,
-    pub(crate) children: RefCell<Vec<Rc<Stmt<'a>>>>,
-    pub(crate) kind: &'a StmtKind,
+pub struct Stmt<'stmt> {
+    pub(crate) parent: Weak<Stmt<'stmt>>,
+    pub(crate) next_sib: Weak<Stmt<'stmt>>,
+    pub(crate) children: RefCell<Vec<Rc<Stmt<'stmt>>>>,
+    pub(crate) kind: &'stmt StmtKind,
 }
 
-pub fn next_stmt<'a>(s: &Rc<Stmt<'a>>) -> Rc<Stmt<'a>> {
+pub fn next_stmt<'stmt>(s: &Rc<Stmt<'stmt>>) -> Rc<Stmt<'stmt>> {
     use StmtKind::*;
     match s.kind {
         Skip | Fail | Assign(..) | Return(..) => {
@@ -58,8 +58,8 @@ pub fn next_stmt<'a>(s: &Rc<Stmt<'a>>) -> Rc<Stmt<'a>> {
 }
 
 use StmtKind::*;
-impl<'a> Stmt<'a> {
-    pub fn make(kind: &'a StmtKind, parent: Weak<Stmt<'a>>, next_sib: Weak<Stmt<'a>>) -> Rc<Stmt<'a>> {
+impl<'stmt> Stmt<'stmt> {
+    pub fn make(kind: &'stmt StmtKind, parent: Weak<Stmt<'stmt>>, next_sib: Weak<Stmt<'stmt>>) -> Rc<Stmt<'stmt>> {
         match kind {
             Skip | Fail | Assign(..) | Return(..) =>
                 Rc::new(Stmt {
@@ -108,7 +108,7 @@ pub fn check_stmt_is_well_formed(top: &Rc<Stmt>) {
 }
 
 #[derive(Debug)]
-pub struct Function<'a> {
+pub struct Function<'stmt> {
     pub params: Vec<Variable>,
-    pub body: Rc<Stmt<'a>>,
+    pub body: Rc<Stmt<'stmt>>,
 }

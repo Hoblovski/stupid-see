@@ -8,19 +8,27 @@ use crate::lang::*;
 use crate::lang::Stmt as s;
 use crate::lang::NatExpr as e;
 
+
 type ConstraintSet<'ctx> = Vec<Rc<z3::Ast<'ctx>>>;
-type StateSet<'ctx> = Vec<State<'ctx>>;
+
+type StateSet<'ctx, 'stmt> = Vec<State<'ctx, 'stmt>>;
+
 type Report<'ctx> = z3::Model<'ctx>;
 type ReportSet<'ctx> = Vec<Report<'ctx>>;
-type AbstractHeap<'ctx> = HashMap<&'static str, Rc<z3::Ast<'ctx>>>;
 
-struct State<'ctx> {
+type AbstractHeap<'ctx> = HashMap<&'static str, Rc<z3::Ast<'ctx>>>;
+// possibly no builtin. use 3rd party
+
+struct State<'ctx, 'stmt> {
     heap: AbstractHeap<'ctx>,
     conds: ConstraintSet<'ctx>,
-    pc: Rc<Stmt>,
+    pc: Rc<Stmt<'stmt>>,
 }
 
-fn initial_states<'ctx>(f: &Function, ctx: &'ctx z3::Context) -> StateSet<'ctx> {
+// lifetime can be elided like...
+// fn initial_states(f: &Function, ctx: &'_ z3::Context) -> StateSet {
+//
+fn initial_states<'ctx, 'stmt>(f: &Function<'stmt>, ctx: &'ctx z3::Context) -> StateSet<'ctx, 'stmt> {
     let mut state: State = State {
         heap: HashMap::new(),
         conds: Vec::new(),
@@ -33,7 +41,7 @@ fn initial_states<'ctx>(f: &Function, ctx: &'ctx z3::Context) -> StateSet<'ctx> 
     vec![state]
 }
 
-fn select_state<'ctx>(s: &mut StateSet<'ctx>) -> State<'ctx> {
+fn select_state<'ctx, 'stmt>(s: &mut StateSet<'ctx, 'stmt>) -> State<'ctx, 'stmt> {
     s.pop().unwrap()
 }
 
@@ -57,34 +65,28 @@ fn check_sat<'ctx>(s: State, ctx: &'ctx z3::Context) {
     }
 }
 
-fn explore_state<'ctx>(s: State<'ctx>, ctx: &'ctx z3::Context) -> (StateSet<'ctx>, ReportSet<'ctx>) {
+fn explore_state<'ctx, 'stmt>(s: State<'ctx, 'stmt>, ctx: &'ctx z3::Context) -> (StateSet<'ctx, 'stmt>, ReportSet<'ctx>) {
+    use StmtKind::*;
     match &s.pc.kind {
-        StmtKind::Block => {
+        Block(..) | Skip => {
             (vec![State {
                 heap: s.heap,
                 conds: s.conds,
-                pc: next_stmt(s.pc),
+                pc: next_stmt(&s.pc),
             }], Vec::new())
         },
-        StmtKind::Skip => {
-            (vec![State {
-                heap: s.heap,
-                conds: s.conds,
-                pc: next_stmt(s.pc),
-            }], Vec::new())
-        },
-        StmtKind::Assign { lhs: Variable(name), rhs: e } => {
-            let rhs_val = evaluate(e, &s.heap, ctx);
+        Assign(Variable(name), rhs) => {
+            let rhs_val = evaluate(rhs, &s.heap, ctx);
             let mut new_heap = s.heap.clone();
             *new_heap.get_mut(name).expect("assigning to nonexistent variable") = rhs_val;
             // TODO: clone is too awkward
             (vec![State {
                 heap: new_heap,
                 conds: s.conds,
-                pc: next_stmt(s.pc),
+                pc: next_stmt(&s.pc),
             }], Vec::new())
         }
-        StmtKind::Fail => {
+        Fail => {
             check_sat(s, ctx);
             (Vec::new(), Vec::new())
         }
@@ -92,7 +94,7 @@ fn explore_state<'ctx>(s: State<'ctx>, ctx: &'ctx z3::Context) -> (StateSet<'ctx
     }
 }
 
-fn append_state<'ctx>(s1: &mut StateSet<'ctx>, mut s2: StateSet<'ctx>) {
+fn append_state<'ctx, 'stmt>(s1: &mut StateSet<'ctx, 'stmt>, mut s2: StateSet<'ctx, 'stmt>) {
     s1.append(&mut s2);
 }
 
