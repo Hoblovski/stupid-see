@@ -13,8 +13,9 @@ type ConstraintSet<'ctx> = Vec<Rc<z3::Ast<'ctx>>>;
 
 type StateSet<'ctx, 'stmt> = Vec<State<'ctx, 'stmt>>;
 
-type Report<'ctx> = z3::Model<'ctx>;
-type ReportSet<'ctx> = Vec<Report<'ctx>>;
+type FailCase = HashMap<&'static str, u32>;
+
+type FailCaseSet = Vec<FailCase>;
 
 type AbstractHeap<'ctx> = HashMap<&'static str, Rc<z3::Ast<'ctx>>>;
 // possibly no builtin. use 3rd party
@@ -49,23 +50,40 @@ fn evaluate<'ctx>(expr: &NatExpr, heap: &AbstractHeap<'ctx>, ctx: &'ctx z3::Cont
     match expr {
         e::Const(v) =>
             Rc::new(z3::Ast::bv32_from_u64(ctx, *v as u64)),
+        e::Var(Variable(name)) =>
+            heap.get(name).expect("no such variable in current scope").clone(),
+        e::Add(e1, e2) => {
+            let e1 = evaluate(e1.as_ref(), heap, ctx);
+            let e2 = evaluate(e2.as_ref(), heap, ctx);
+            Rc::new(e1.bvadd(e2.as_ref()))
+        },
+        e::Sub(e1, e2) => {
+            let e1 = evaluate(e1.as_ref(), heap, ctx);
+            let e2 = evaluate(e2.as_ref(), heap, ctx);
+            Rc::new(e1.bvsub(e2.as_ref()))
+        },
+        e::Mul(e1, e2) => {
+            let e1 = evaluate(e1.as_ref(), heap, ctx);
+            let e2 = evaluate(e2.as_ref(), heap, ctx);
+            Rc::new(e1.bvmul(e2.as_ref()))
+        },
         _ => unimplemented!(),
     }
 }
 
-fn check_sat<'ctx>(s: State, ctx: &'ctx z3::Context) {
+fn get_fail_fail_cases<'ctx>(s: State<'ctx, '_>, ctx: &'ctx z3::Context) -> FailCaseSet {
     let solver = z3::Solver::new(ctx);
-    if solver.check() {
-        println!("early report: failed!");
-        let model = solver.get_model();
-        for (k, v) in s.heap {
-            let v = model.eval(&v).unwrap().as_u64().unwrap();
-            println!("var for {} {}", k, v);
-        }
-    }
+    if ! solver.check() { return vec![]; }
+    let model = solver.get_model();
+
+    let fc: FailCase = s.heap.iter()
+        .map(|(&k, v)| (k, model.eval(&v).unwrap().as_u64().unwrap() as u32))
+        .collect();
+
+    vec![ fc ]
 }
 
-fn explore_state<'ctx, 'stmt>(s: State<'ctx, 'stmt>, ctx: &'ctx z3::Context) -> (StateSet<'ctx, 'stmt>, ReportSet<'ctx>) {
+fn explore_state<'ctx, 'stmt>(s: State<'ctx, 'stmt>, ctx: &'ctx z3::Context) -> (StateSet<'ctx, 'stmt>, FailCaseSet) {
     use StmtKind::*;
     match &s.pc.kind {
         Block(..) | Skip => {
@@ -78,7 +96,9 @@ fn explore_state<'ctx, 'stmt>(s: State<'ctx, 'stmt>, ctx: &'ctx z3::Context) -> 
         Assign(Variable(name), rhs) => {
             let rhs_val = evaluate(rhs, &s.heap, ctx);
             let mut new_heap = s.heap.clone();
-            *new_heap.get_mut(name).expect("assigning to nonexistent variable") = rhs_val;
+            *new_heap.get_mut(name)
+                .expect("assigning to nonexistent variable")
+                = rhs_val;
             // TODO: clone is too awkward
             (vec![State {
                 heap: new_heap,
@@ -87,9 +107,8 @@ fn explore_state<'ctx, 'stmt>(s: State<'ctx, 'stmt>, ctx: &'ctx z3::Context) -> 
             }], Vec::new())
         }
         Fail => {
-            check_sat(s, ctx);
-            (Vec::new(), Vec::new())
-        }
+            (Vec::new(), get_fail_fail_cases(s, ctx))
+        },
         _ => unimplemented!(),
     }
 }
@@ -98,24 +117,23 @@ fn append_state<'ctx, 'stmt>(s1: &mut StateSet<'ctx, 'stmt>, mut s2: StateSet<'c
     s1.append(&mut s2);
 }
 
-fn early_report(reports: ReportSet) {
-    if reports.is_empty() { return; }
-    println!("early report: fail!");
-}
-
-pub fn symbolic_execute(f: &Function) {
+pub fn symbolic_execute(f: &Function) -> FailCaseSet {
     let cfg = z3::Config::new();
     let ctx = z3::Context::new(&cfg);
     let mut states = initial_states(f, &ctx);
+    let mut fail_cases: FailCaseSet = Vec::new();
+
     while !states.is_empty() {
         let cand = select_state(&mut states);
         println!("Selected State pc: \n{:#?}", cand.pc);
-        let (mut new_states, reports) = explore_state(cand, &ctx);
+        let (mut new_states, mut new_fail_cases) = explore_state(cand, &ctx);
         for ns in new_states.iter() {
             println!("Explored State pc: \n{:#?}", ns.pc);
         }
         println!("==============================================================================");
         append_state(&mut states, new_states);
-        early_report(reports);
+        fail_cases.append(&mut new_fail_cases);
     }
+
+    fail_cases
 }

@@ -1,4 +1,5 @@
 use std::rc::{Rc, Weak};
+use std::boxed::Box;
 use std::cell::RefCell;
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -6,18 +7,26 @@ pub struct Variable(pub &'static str);
 
 #[derive(Debug)]
 pub enum NatExpr {
-//    Add(Rc<NatExpr>, Rc<NatExpr>),
-//    Sub(Rc<NatExpr>, Rc<NatExpr>),
-//    Mul(Rc<NatExpr>, Rc<NatExpr>),
+    Add(Box<NatExpr>, Box<NatExpr>),
+    Sub(Box<NatExpr>, Box<NatExpr>),
+    Mul(Box<NatExpr>, Box<NatExpr>),
     Const(u32),
     Var(Variable),
 }
 
 impl NatExpr {
-//    pub fn add(a: NatExpr, b: NatExpr) -> NatExpr {
-//        NatExpr::Add(Rc::new(a), Rc::new(b))
-//    }
-
+    pub fn add(a: NatExpr, b: NatExpr) -> NatExpr {
+        NatExpr::Add(Box::new(a), Box::new(b))
+    }
+    pub fn sub(a: NatExpr, b: NatExpr) -> NatExpr {
+        NatExpr::Sub(Box::new(a), Box::new(b))
+    }
+    pub fn mul(a: NatExpr, b: NatExpr) -> NatExpr {
+        NatExpr::Mul(Box::new(a), Box::new(b))
+    }
+    pub fn konst(v: u32) -> NatExpr {
+        NatExpr::Const(v)
+    }
     pub fn var(name: &'static str) -> NatExpr {
         NatExpr::Var(Variable(name))
     }
