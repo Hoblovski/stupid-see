@@ -96,6 +96,7 @@ pub enum StmtKind {
     Return(NatExpr),
     IfThenElse(BoolExpr, Box<StmtKind>, Box<StmtKind>),
     DeclNatVar(Variable),
+    While(BoolExpr, Box<StmtKind>),
 }
 
 /// Structured statements -- 'linked'.
@@ -110,25 +111,32 @@ pub struct Stmt<'stmt> {
 }
 
 /// What statement should be executed after the current one.
+// TODO: definition more rigid with CFG
 pub enum NextStmtResult<'stmt> {
     EndOfProgram,
-    Branching(Rc<Stmt<'stmt>>, Rc<Stmt<'stmt>>),
+    Branching(Rc<Stmt<'stmt>>, Rc<Stmt<'stmt>>), // true, false
     Unique(Rc<Stmt<'stmt>>),
 }
 
 pub fn next_stmt<'stmt>(s: &Rc<Stmt<'stmt>>) -> NextStmtResult<'stmt> {
     use StmtKind::*;
     use NextStmtResult as R;
+
+    let next_sequential = || { // mimic lazy
+        let mut r = s.clone();
+        while let None = r.next_sib.upgrade() {
+            match r.parent.upgrade() {
+                None => return None,
+                Some(x) => r = x,
+            }
+        }
+        r.next_sib.upgrade()
+    };
+
     match s.kind {
         Skip | Fail | Assign(..) | Return(..) | DeclNatVar(..) => {
-            let mut r = s.clone();
-            while let None = r.next_sib.upgrade() {
-                match r.parent.upgrade() {
-                    None => return R::EndOfProgram,
-                    Some(x) => r = x,
-                }
-            }
-            R::Unique(r.next_sib.upgrade().unwrap())
+            if let Some(x) = next_sequential() { R::Unique(x) }
+            else { R::EndOfProgram }
         },
         Block(..) =>
             R::Unique(s.children.borrow()[0].clone()),
@@ -136,6 +144,10 @@ pub fn next_stmt<'stmt>(s: &Rc<Stmt<'stmt>>) -> NextStmtResult<'stmt> {
             let c = s.children.borrow();
             R::Branching(c[0].clone(), c[1].clone())
         },
+        While(..) => {
+            R::Branching(s.children.borrow()[0].clone(), next_sequential().unwrap())
+            // XXX: this forbids while's as last statements
+        }
     }
 }
 
@@ -175,6 +187,18 @@ impl<'stmt> Stmt<'stmt> {
                 *s.children.borrow_mut() = vec![s1, s2];
                 s
             },
+            While(_, s1) => {
+                let s = Rc::new(Stmt {
+                    parent, next_sib,
+                    children: RefCell::new(Vec::new()),
+                    kind
+                });
+                // Note: while-sub . next_sib is while itself!
+                // XXX this is due to CFG semantics. Other parts are inconsisent.
+                let s1 = Stmt::make(s1, Rc::downgrade(&s), Rc::downgrade(&s));
+                *s.children.borrow_mut() = vec![s1];
+                s
+            }
         }
     }
 }

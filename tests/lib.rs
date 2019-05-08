@@ -195,3 +195,123 @@ fn test_remainder() {
         }),
     ]));
 }
+
+#[test]
+fn test_while_1() {
+    let sk = IfThenElse(b::natle(n::var("n"), n::konst(100)),
+        Box::new(Block(vec![
+            DeclNatVar(Variable("x")),
+            Assign(Variable("x"), n::konst(0)),
+            DeclNatVar(Variable("y")),
+            Assign(Variable("y"), n::var("n")),
+            While(b::natgt(n::var("y"), n::konst(0)),
+                Box::new(Block(vec![
+                    Assign(Variable("x"), n::add(n::var("x"), n::var("n"))),
+                    Assign(Variable("y"), n::sub(n::var("y"), n::konst(1))),
+                ]))),
+            IfThenElse(b::nateq(n::var("x"), n::mul(n::var("n"), n::var("n"))),
+                Box::new(Skip),
+                Box::new(Fail))
+        ])),
+        Box::new(Skip));
+
+    let simple_fun = Function {
+        params: vec![Variable("n")],
+        body: s::make(&sk, Weak::new(), Weak::new())
+    };
+    let fail_cases = symbolic_execute(&simple_fun);
+
+    assert!(fail_cases.is_empty());
+}
+
+#[test]
+fn test_while_2() {
+    let sk = IfThenElse(b::natle(n::var("n"), n::konst(100)),
+        Box::new(Block(vec![
+            DeclNatVar(Variable("x")),
+            Assign(Variable("x"), n::konst(0)),
+            DeclNatVar(Variable("y")),
+            Assign(Variable("y"), n::var("n")),
+            While(b::natgt(n::var("y"), n::konst(0)),
+                Box::new(Block(vec![
+                    Assign(Variable("x"), n::add(n::var("x"), n::var("n"))),
+                    Assign(Variable("y"), n::sub(n::var("y"), n::konst(1))),
+                ]))),
+            IfThenElse(b::nateq(n::var("x"), n::rem(n::mul(n::var("n"), n::var("n")), n::konst(9376))),
+                Box::new(Skip),
+                Box::new(Fail))
+        ])),
+        Box::new(Skip));
+
+    let simple_fun = Function {
+        params: vec![Variable("n")],
+        body: s::make(&sk, Weak::new(), Weak::new())
+    };
+    let fail_cases = symbolic_execute(&simple_fun);
+
+    assert!(fail_cases.len() == 4);
+    assert!(any_all(&fail_cases, vec![
+        Box::new(|fail_case| {
+            let n = *fail_case.get("n").unwrap();
+            n == 97
+        }),
+        Box::new(|fail_case| {
+            let n = *fail_case.get("n").unwrap();
+            n == 98
+        }),
+        Box::new(|fail_case| {
+            let n = *fail_case.get("n").unwrap();
+            n == 99
+        }),
+        Box::new(|fail_case| {
+            let n = *fail_case.get("n").unwrap();
+            n == 100
+        }),
+    ]));
+}
+
+#[test]
+fn test_while_3() {
+    let sk = Block(vec![
+        Assign(Variable("x"), n::rem(n::var("x"), n::konst(3))),
+        // x := x % 3
+        While(b::natle(n::var("x"), n::konst(10)),
+            Box::new(Assign(Variable("x"), n::add(n::var("x"), n::konst(7))))),
+        // while x <= 10 do x := x + 7 end while
+        IfThenElse(b::nateq(n::var("x"), n::konst(12)),
+            Box::new(Fail), Box::new(Skip)),
+        // assert x != 12
+    ]);
+    let simple_fun = Function {
+        params: vec![Variable("x")],
+        body: s::make(&sk, Weak::new(), Weak::new())
+    };
+    let fail_cases = symbolic_execute(&simple_fun);
+    assert!(fail_cases.is_empty());
+}
+
+#[test]
+fn test_while_4() {
+    let sk = Block(vec![
+        Assign(Variable("x"), n::rem(n::var("x"), n::konst(3))),
+        // x := x % 3
+        While(b::natle(n::var("x"), n::konst(10)),
+            Box::new(Assign(Variable("x"), n::add(n::var("x"), n::konst(3))))),
+        // while x <= 10 do x := x + 7 end while
+        IfThenElse(b::nateq(n::var("x"), n::konst(12)),
+            Box::new(Fail), Box::new(Skip)),
+        // assert x != 12
+    ]);
+    let simple_fun = Function {
+        params: vec![Variable("x")],
+        body: s::make(&sk, Weak::new(), Weak::new())
+    };
+    let fail_cases = symbolic_execute(&simple_fun);
+    assert!(fail_cases.len() == 1);
+    assert!(any_all(&fail_cases, vec![
+        Box::new(|fail_case| {
+            let x = *fail_case.get("x").unwrap();
+            x % 3 == 0
+        }),
+    ]));
+}

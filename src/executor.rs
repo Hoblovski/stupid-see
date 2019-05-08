@@ -113,15 +113,24 @@ fn evaluate_bool<'ctx>(expr: &BoolExpr, heap: &AbstractHeap<'ctx>, ctx: &'ctx z3
     }
 }
 
-fn get_fail_fail_cases<'ctx>(s: State<'ctx, '_>, ctx: &'ctx z3::Context, f: &Function) -> FailCaseSet {
+fn state_is_satisfiable<'ctx>(s: &State<'ctx, '_>, ctx: &'ctx z3::Context) -> (bool, z3::Solver<'ctx>) {
     let solver = z3::Solver::new(ctx);
     for c in s.conds.iter() { solver.assert(c); }
-    if ! solver.check() { return vec![]; }
+    (solver.check(), solver)
+}
+
+fn get_fail_cases<'ctx>(s: State<'ctx, '_>, ctx: &'ctx z3::Context, f: &Function) -> FailCaseSet {
+    let (sat, solver) = state_is_satisfiable(&s, ctx);
+    if ! sat { return vec![]; }
     let model = solver.get_model();
 
     let fc: FailCase = f.params.iter()
         .map(|Variable(param_name)| (*param_name, model.eval(&ctx.named_bitvector_const(param_name, 32)).unwrap().as_u64().unwrap() as u32))
         .collect();
+
+    println!("heap at fail case: {:#?}", &s.heap.iter()
+        .map(|(&name, val)| (name, model.eval(&val).unwrap().as_u64().unwrap() as u32))
+        .collect::<FailCase>());
 
     vec![ fc ]
 }
@@ -133,7 +142,7 @@ fn explore_state<'ctx, 'stmt>(mut s: State<'ctx, 'stmt>, ctx: &'ctx z3::Context,
     use NextStmtResult::*;
 
     if let Fail = &s.pc.kind {
-        return (Vec::new(), get_fail_fail_cases(s, ctx, f));
+        return (Vec::new(), get_fail_cases(s, ctx, f));
     }
 
     match next_stmt(&s.pc) {
@@ -148,8 +157,22 @@ fn explore_state<'ctx, 'stmt>(mut s: State<'ctx, 'stmt>, ctx: &'ctx z3::Context,
                     s2.pc = false_cl;
                     s.conds.push(cond);
                     s.pc = true_cl;
+                    // TODO: check sat before pushing state
                     (vec![s, s2], Vec::new())
                 },
+                While(cond, ..) => {
+                    let mut s2 = s.clone();
+                    let cond = evaluate_bool(cond, &s.heap, ctx);
+                    s2.conds.push(Rc::new(cond.not()));
+                    s2.pc = false_cl;
+                    s.conds.push(cond);
+                    if state_is_satisfiable(&s, ctx).0 {
+                        s.pc = true_cl;
+                        (vec![s, s2], Vec::new())
+                    } else {
+                        (vec![s2], Vec::new())
+                    }
+                }
                 _ => panic!("unhandled explore_state"),
             }
         },
