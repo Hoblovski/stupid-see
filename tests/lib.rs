@@ -138,3 +138,60 @@ fn test_if_then_else_3() {
         }),
     ]));
 }
+
+#[test]
+fn test_newvar_quadratic_equation() {
+    // f(x)
+    //   if x < 100
+    //     var y
+    //     y := x * x
+    //     if y == 2*x + 238
+    //       fail
+    //     else skip
+    //   else skip
+    let sk = Block(vec![
+        IfThenElse(b::natle(n::var("x"), n::konst(100)),
+            Box::new(Block(vec![
+                DeclNatVar(Variable("y")),
+                Assign(Variable("y"), n::mul(n::var("x"), n::var("x"))),
+                IfThenElse(b::nateq(n::var("y"), n::add(n::mul(n::konst(3), n::var("x")), n::konst(238))),
+                    Box::new(Fail),
+                    Box::new(Skip)),])),
+            Box::new(Skip)),
+    ]);
+    let simple_fun = Function {
+        params: vec![Variable("x")],
+        body: s::make(&sk, Weak::new(), Weak::new())
+    };
+    let fail_cases = symbolic_execute(&simple_fun);
+    assert!(fail_cases.len() == 1);
+    assert!(any_all(&fail_cases, vec![
+        Box::new(|fail_case| {
+            let x = *fail_case.get("x").unwrap();
+            x == 17
+        }),
+    ]));
+}
+
+#[test]
+fn test_remainder() {
+    let sk = Block(vec![
+        IfThenElse(b::and(b::natge(n::var("x"), n::konst(100)), b::natle(n::var("x"), n::konst(500))),
+            Box::new(IfThenElse(b::nateq(n::rem(n::var("x"), n::konst(67)), n::konst(32)),
+                Box::new(Fail),
+                Box::new(Skip))),
+            Box::new(Skip)),
+    ]);
+    let simple_fun = Function {
+        params: vec![Variable("x")],
+        body: s::make(&sk, Weak::new(), Weak::new())
+    };
+    let fail_cases = symbolic_execute(&simple_fun);
+    assert!(fail_cases.len() == 1);
+    assert!(any_all(&fail_cases, vec![
+        Box::new(|fail_case| {
+            let x = *fail_case.get("x").unwrap();
+            x >= 100 && x <= 500 && x % 67 == 32
+        }),
+    ]));
+}

@@ -69,6 +69,11 @@ fn evaluate<'ctx>(expr: &NatExpr, heap: &AbstractHeap<'ctx>, ctx: &'ctx z3::Cont
             let e2 = evaluate(e2.as_ref(), heap, ctx);
             Rc::new(e1.bvmul(e2.as_ref()))
         },
+        n::Rem(e1, e2) => {
+            let e1 = evaluate(e1.as_ref(), heap, ctx);
+            let e2 = evaluate(e2.as_ref(), heap, ctx);
+            Rc::new(e1.bvurem(e2.as_ref()))
+        }
         _ => unimplemented!(),
     }
 }
@@ -138,7 +143,6 @@ fn explore_state<'ctx, 'stmt>(mut s: State<'ctx, 'stmt>, ctx: &'ctx z3::Context,
             match &s.pc.kind {
                 IfThenElse(cond, ..) => {
                     let mut s2 = s.clone();
-                    println!("forking on {:?}", cond);
                     let cond = evaluate_bool(cond, &s.heap, ctx);
                     s2.conds.push(Rc::new(cond.not()));
                     s2.pc = false_cl;
@@ -165,6 +169,11 @@ fn explore_state<'ctx, 'stmt>(mut s: State<'ctx, 'stmt>, ctx: &'ctx z3::Context,
                     (vec![State { heap: new_heap, conds: s.conds, pc: next_pc, }],
                      Vec::new())
                 },
+                DeclNatVar(Variable(name)) => {
+                    let z3val = Rc::new(ctx.named_bitvector_const(name, 32));
+                    s.heap.entry(name).or_insert(z3val);
+                    (vec![State { pc: next_pc, ..s} ], Vec::new())
+                }
                 _ => panic!("unhandled explore_state"),
             }
         },

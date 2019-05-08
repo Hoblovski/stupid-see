@@ -7,14 +7,20 @@ use std::rc::{Rc, Weak};
 use std::boxed::Box;
 use std::cell::RefCell;
 
+/// Wraps a variable.
+/// Variables are unique w.r.t. their names, which is currently represented as &'static str's.
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct Variable(pub &'static str);
 
+/// An expression with type u32.
+/// Nat here is probably quite a misnomer.
+/// Uses z3's bitvector, with 32-bit size and unsigned oeprations.
 #[derive(Debug)]
 pub enum NatExpr {
     Add(Box<NatExpr>, Box<NatExpr>),
     Sub(Box<NatExpr>, Box<NatExpr>),
     Mul(Box<NatExpr>, Box<NatExpr>),
+    Rem(Box<NatExpr>, Box<NatExpr>),
     Const(u32),
     Var(Variable),
 }
@@ -35,8 +41,12 @@ impl NatExpr {
     pub fn var(name: &'static str) -> NatExpr {
         NatExpr::Var(Variable(name))
     }
+    pub fn rem(a: NatExpr, b: NatExpr) -> NatExpr {
+        NatExpr::Rem(Box::new(a), Box::new(b))
+    }
 }
 
+/// An expression with type bool.
 #[derive(Debug)]
 pub enum BoolExpr {
     NatEq(NatExpr, NatExpr),
@@ -74,7 +84,9 @@ impl BoolExpr {
     }
 }
 
-
+/// The program statements.
+///
+/// Should look like the AST definition.
 #[derive(Debug)]
 pub enum StmtKind {
     Assign(Variable, NatExpr),
@@ -83,9 +95,12 @@ pub enum StmtKind {
     Fail,
     Return(NatExpr),
     IfThenElse(BoolExpr, Box<StmtKind>, Box<StmtKind>),
+    DeclNatVar(Variable),
 }
 
 /// Structured statements -- 'linked'.
+///
+/// Link the statements so we can easily traverse them while executing.
 #[derive(Debug)]
 pub struct Stmt<'stmt> {
     pub(crate) parent: Weak<Stmt<'stmt>>,
@@ -94,6 +109,7 @@ pub struct Stmt<'stmt> {
     pub(crate) kind: &'stmt StmtKind,
 }
 
+/// What statement should be executed after the current one.
 pub enum NextStmtResult<'stmt> {
     EndOfProgram,
     Branching(Rc<Stmt<'stmt>>, Rc<Stmt<'stmt>>),
@@ -104,7 +120,7 @@ pub fn next_stmt<'stmt>(s: &Rc<Stmt<'stmt>>) -> NextStmtResult<'stmt> {
     use StmtKind::*;
     use NextStmtResult as R;
     match s.kind {
-        Skip | Fail | Assign(..) | Return(..) => {
+        Skip | Fail | Assign(..) | Return(..) | DeclNatVar(..) => {
             let mut r = s.clone();
             while let None = r.next_sib.upgrade() {
                 match r.parent.upgrade() {
@@ -127,7 +143,7 @@ use StmtKind::*;
 impl<'stmt> Stmt<'stmt> {
     pub fn make(kind: &'stmt StmtKind, parent: Weak<Stmt<'stmt>>, next_sib: Weak<Stmt<'stmt>>) -> Rc<Stmt<'stmt>> {
         match kind {
-            Skip | Fail | Assign(..) | Return(..) =>
+            Skip | Fail | Assign(..) | Return(..) | DeclNatVar(..) =>
                 Rc::new(Stmt {
                     parent, next_sib,
                     children: RefCell::new(Vec::new()),
@@ -163,6 +179,7 @@ impl<'stmt> Stmt<'stmt> {
     }
 }
 
+/// A function type. Like AST definition.
 #[derive(Debug)]
 pub struct Function<'stmt> {
     pub params: Vec<Variable>,
@@ -196,6 +213,8 @@ mod tests {
         println!("check_stmt_is_well_formed passed")
     }
 
+    /// Ensure Stmt::make returns well-formed Stmt,
+    /// so we do not get stuck while executing.
     #[test]
     fn well_formedness() {
         use super::NatExpr as e;
