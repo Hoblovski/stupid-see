@@ -1,12 +1,13 @@
 use std::collections::HashMap;
-use std::rc::{Rc, Weak};
-use std::cell::RefCell;
+use std::rc::{Rc};
+
 
 extern crate z3;
 
 use crate::lang::*;
-use crate::lang::Stmt as s;
-use crate::lang::NatExpr as e;
+
+use crate::lang::NatExpr as n;
+use crate::lang::BoolExpr as b;
 
 
 type ConstraintSet<'ctx> = Vec<Rc<z3::Ast<'ctx>>>;
@@ -20,6 +21,7 @@ type FailCaseSet = Vec<FailCase>;
 type AbstractHeap<'ctx> = HashMap<&'static str, Rc<z3::Ast<'ctx>>>;
 // possibly no builtin. use 3rd party
 
+#[derive(Clone)]
 struct State<'ctx, 'stmt> {
     heap: AbstractHeap<'ctx>,
     conds: ConstraintSet<'ctx>,
@@ -48,21 +50,21 @@ fn select_state<'ctx, 'stmt>(s: &mut StateSet<'ctx, 'stmt>) -> State<'ctx, 'stmt
 
 fn evaluate<'ctx>(expr: &NatExpr, heap: &AbstractHeap<'ctx>, ctx: &'ctx z3::Context) -> Rc<z3::Ast<'ctx>> {
     match expr {
-        e::Const(v) =>
+        n::Const(v) =>
             Rc::new(z3::Ast::bv32_from_u64(ctx, *v as u64)),
-        e::Var(Variable(name)) =>
+        n::Var(Variable(name)) =>
             heap.get(name).expect("no such variable in current scope").clone(),
-        e::Add(e1, e2) => {
+        n::Add(e1, e2) => {
             let e1 = evaluate(e1.as_ref(), heap, ctx);
             let e2 = evaluate(e2.as_ref(), heap, ctx);
             Rc::new(e1.bvadd(e2.as_ref()))
         },
-        e::Sub(e1, e2) => {
+        n::Sub(e1, e2) => {
             let e1 = evaluate(e1.as_ref(), heap, ctx);
             let e2 = evaluate(e2.as_ref(), heap, ctx);
             Rc::new(e1.bvsub(e2.as_ref()))
         },
-        e::Mul(e1, e2) => {
+        n::Mul(e1, e2) => {
             let e1 = evaluate(e1.as_ref(), heap, ctx);
             let e2 = evaluate(e2.as_ref(), heap, ctx);
             Rc::new(e1.bvmul(e2.as_ref()))
@@ -71,8 +73,44 @@ fn evaluate<'ctx>(expr: &NatExpr, heap: &AbstractHeap<'ctx>, ctx: &'ctx z3::Cont
     }
 }
 
+// TODO: awkward.
+fn evaluate_bool<'ctx>(expr: &BoolExpr, heap: &AbstractHeap<'ctx>, ctx: &'ctx z3::Context) -> Rc<z3::Ast<'ctx>> {
+    match expr {
+        b::NatEq(e1, e2) => {
+            let e1 = evaluate(e1, heap, ctx);
+            let e2 = evaluate(e2, heap, ctx);
+            Rc::new(e1._eq(&e2))
+        },
+        b::NatLe(e1, e2) => {
+            let e1 = evaluate(e1, heap, ctx);
+            let e2 = evaluate(e2, heap, ctx);
+            Rc::new(e1.bvule(&e2))
+        },
+        b::NatLt(e1, e2) => {
+            let e1 = evaluate(e1, heap, ctx);
+            let e2 = evaluate(e2, heap, ctx);
+            Rc::new(e1.bvult(&e2))
+        },
+        b::Neg(e1) => {
+            let e1 = evaluate_bool(e1, heap, ctx);
+            Rc::new(e1.not())
+        }
+        b::And(e1, e2) => {
+            let e1 = evaluate_bool(e1, heap, ctx);
+            let e2 = evaluate_bool(e2, heap, ctx);
+            Rc::new(e1.and(&[&e2]))
+        }
+        b::Or(e1, e2) => {
+            let e1 = evaluate_bool(e1, heap, ctx);
+            let e2 = evaluate_bool(e2, heap, ctx);
+            Rc::new(e1.or(&[&e2]))
+        }
+    }
+}
+
 fn get_fail_fail_cases<'ctx>(s: State<'ctx, '_>, ctx: &'ctx z3::Context) -> FailCaseSet {
     let solver = z3::Solver::new(ctx);
+    for c in s.conds.iter() { solver.assert(c); }
     if ! solver.check() { return vec![]; }
     let model = solver.get_model();
 
@@ -83,33 +121,50 @@ fn get_fail_fail_cases<'ctx>(s: State<'ctx, '_>, ctx: &'ctx z3::Context) -> Fail
     vec![ fc ]
 }
 
-fn explore_state<'ctx, 'stmt>(s: State<'ctx, 'stmt>, ctx: &'ctx z3::Context) -> (StateSet<'ctx, 'stmt>, FailCaseSet) {
+fn explore_state<'ctx, 'stmt>(mut s: State<'ctx, 'stmt>, ctx: &'ctx z3::Context) -> (StateSet<'ctx, 'stmt>, FailCaseSet) {
     use StmtKind::*;
-    match &s.pc.kind {
-        Block(..) | Skip => {
-            (vec![State {
-                heap: s.heap,
-                conds: s.conds,
-                pc: next_stmt(&s.pc),
-            }], Vec::new())
+    use NextStmtResult::*;
+
+    if let Fail = &s.pc.kind {
+        return (Vec::new(), get_fail_fail_cases(s, ctx));
+    }
+
+    match next_stmt(&s.pc) {
+        EndOfProgram =>
+            (Vec::new(), Vec::new()),
+        Branching(true_cl, false_cl) => {
+            match &s.pc.kind {
+                IfThenElse(cond, ..) => {
+                    let mut s2 = s.clone();
+                    let cond = evaluate_bool(cond, &s.heap, ctx);
+                    s2.conds.push(Rc::new(cond.not()));
+                    s2.pc = false_cl;
+                    s.conds.push(cond);
+                    s.pc = true_cl;
+                    (vec![s, s2], Vec::new())
+                },
+                _ => panic!("unhandled explore_state"),
+            }
         },
-        Assign(Variable(name), rhs) => {
-            let rhs_val = evaluate(rhs, &s.heap, ctx);
-            let mut new_heap = s.heap.clone();
-            *new_heap.get_mut(name)
-                .expect("assigning to nonexistent variable")
-                = rhs_val;
-            // TODO: clone is too awkward
-            (vec![State {
-                heap: new_heap,
-                conds: s.conds,
-                pc: next_stmt(&s.pc),
-            }], Vec::new())
-        }
-        Fail => {
-            (Vec::new(), get_fail_fail_cases(s, ctx))
+        Unique(next_pc) => {
+            match &s.pc.kind {
+                Block(..) | Skip => {
+                    (vec![State { heap: s.heap, conds: s.conds, pc: next_pc, }],
+                     Vec::new())
+                },
+                Assign(Variable(name), rhs) => {
+                    let rhs_val = evaluate(rhs, &s.heap, ctx);
+                    let mut new_heap = s.heap.clone();
+                    *new_heap.get_mut(name)
+                        .expect("assigning to nonexistent variable")
+                        = rhs_val;
+                    // TODO: clone is too awkward
+                    (vec![State { heap: new_heap, conds: s.conds, pc: next_pc, }],
+                     Vec::new())
+                },
+                _ => panic!("unhandled explore_state"),
+            }
         },
-        _ => unimplemented!(),
     }
 }
 
@@ -125,12 +180,7 @@ pub fn symbolic_execute(f: &Function) -> FailCaseSet {
 
     while !states.is_empty() {
         let cand = select_state(&mut states);
-        println!("Selected State pc: \n{:#?}", cand.pc);
-        let (mut new_states, mut new_fail_cases) = explore_state(cand, &ctx);
-        for ns in new_states.iter() {
-            println!("Explored State pc: \n{:#?}", ns.pc);
-        }
-        println!("==============================================================================");
+        let (new_states, mut new_fail_cases) = explore_state(cand, &ctx);
         append_state(&mut states, new_states);
         fail_cases.append(&mut new_fail_cases);
     }

@@ -37,6 +37,43 @@ impl NatExpr {
     }
 }
 
+#[derive(Debug)]
+pub enum BoolExpr {
+    NatEq(NatExpr, NatExpr),
+    NatLe(NatExpr, NatExpr),
+    NatLt(NatExpr, NatExpr),
+    Neg(Box<BoolExpr>),
+    And(Box<BoolExpr>, Box<BoolExpr>),
+    Or(Box<BoolExpr>, Box<BoolExpr>),
+}
+
+impl BoolExpr {
+    pub fn nateq(a: NatExpr, b: NatExpr) -> BoolExpr {
+        BoolExpr::NatEq(a, b)
+    }
+    pub fn natge(a: NatExpr, b: NatExpr) -> BoolExpr {
+        BoolExpr::NatLe(b, a)
+    }
+    pub fn natgt(a: NatExpr, b: NatExpr) -> BoolExpr {
+        BoolExpr::NatLt(b, a)
+    }
+    pub fn natle(a: NatExpr, b: NatExpr) -> BoolExpr {
+        BoolExpr::NatLe(a, b)
+    }
+    pub fn natlt(a: NatExpr, b: NatExpr) -> BoolExpr {
+        BoolExpr::NatLt(a, b)
+    }
+    pub fn neg(a: BoolExpr) -> BoolExpr {
+        BoolExpr::Neg(Box::new(a))
+    }
+    pub fn and(a: BoolExpr, b: BoolExpr) -> BoolExpr {
+        BoolExpr::And(Box::new(a), Box::new(b))
+    }
+    pub fn or(a: BoolExpr, b: BoolExpr) -> BoolExpr {
+        BoolExpr::Or(Box::new(a), Box::new(b))
+    }
+}
+
 
 #[derive(Debug)]
 pub enum StmtKind {
@@ -45,6 +82,7 @@ pub enum StmtKind {
     Block(Vec<StmtKind>),
     Fail,
     Return(NatExpr),
+    IfThenElse(BoolExpr, Box<StmtKind>, Box<StmtKind>),
 }
 
 /// Structured statements -- 'linked'.
@@ -56,18 +94,32 @@ pub struct Stmt<'stmt> {
     pub(crate) kind: &'stmt StmtKind,
 }
 
-pub fn next_stmt<'stmt>(s: &Rc<Stmt<'stmt>>) -> Rc<Stmt<'stmt>> {
+pub enum NextStmtResult<'stmt> {
+    EndOfProgram,
+    Branching(Rc<Stmt<'stmt>>, Rc<Stmt<'stmt>>),
+    Unique(Rc<Stmt<'stmt>>),
+}
+
+pub fn next_stmt<'stmt>(s: &Rc<Stmt<'stmt>>) -> NextStmtResult<'stmt> {
     use StmtKind::*;
+    use NextStmtResult as R;
     match s.kind {
         Skip | Fail | Assign(..) | Return(..) => {
             let mut r = s.clone();
             while let None = r.next_sib.upgrade() {
-                r = r.parent.upgrade().unwrap();
+                match r.parent.upgrade() {
+                    None => return R::EndOfProgram,
+                    Some(x) => r = x,
+                }
             }
-            r.next_sib.upgrade().unwrap()
-        }
-        StmtKind::Block(..) =>
-            s.children.borrow()[0].clone(),
+            R::Unique(r.next_sib.upgrade().unwrap())
+        },
+        Block(..) =>
+            R::Unique(s.children.borrow()[0].clone()),
+        IfThenElse(..) => {
+            let c = s.children.borrow();
+            R::Branching(c[0].clone(), c[1].clone())
+        },
     }
 }
 
@@ -82,18 +134,29 @@ impl<'stmt> Stmt<'stmt> {
                     kind
                 }),
             Block(kinds) => {
-                let mut s = Rc::new(Stmt {
+                let s = Rc::new(Stmt {
                     parent, next_sib,
                     children: RefCell::new(Vec::new()),
                     kind
                 });
-                let children: Vec<_> = kinds.iter().rev().enumerate()
-                    .scan(Weak::new(), |last, (i, kind)| {
+                let children: Vec<_> = kinds.iter().rev()
+                    .scan(Weak::new(), |last, kind| {
                         let r = Stmt::make(kind, Rc::downgrade(&s), last.clone());
                         *last = Rc::downgrade(&r);
                         Some(r)
                     }).collect::<Vec<_>>().into_iter().rev().collect();
                 *s.children.borrow_mut() = children;
+                s
+            },
+            IfThenElse(_, s1, s2) => {
+                let s = Rc::new(Stmt {
+                    parent, next_sib,
+                    children: RefCell::new(Vec::new()),
+                    kind
+                });
+                let s1 = Stmt::make(s1, Rc::downgrade(&s), Weak::new());
+                let s2 = Stmt::make(s2, Rc::downgrade(&s), Weak::new());
+                *s.children.borrow_mut() = vec![s1, s2];
                 s
             },
         }
@@ -105,6 +168,8 @@ pub struct Function<'stmt> {
     pub params: Vec<Variable>,
     pub body: Rc<Stmt<'stmt>>,
 }
+
+
 
 #[cfg(test)]
 mod tests {
