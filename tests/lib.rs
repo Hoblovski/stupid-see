@@ -7,7 +7,7 @@ use stupid_see::lang::StmtKind::*;
 use stupid_see::lang::Stmt as s;
 use stupid_see::lang::NatExpr as n;
 use stupid_see::lang::BoolExpr as b;
-use stupid_see::executor::symbolic_execute;
+use stupid_see::executor::*;
 
 #[test]
 fn test_straightline() {
@@ -28,13 +28,11 @@ fn test_straightline() {
         body: s::make(&sk, Weak::new(), Weak::new())
     };
     let fail_cases = symbolic_execute(&simple_fun);
-    assert_eq!(fail_cases,
-        vec![vec![("x", 2401u32), ("y", 29u32)].into_iter().collect::<HashMap<_, _>>()]
-    );
+    assert_eq!(fail_cases.len(), 1);
 }
 
 #[test]
-fn test_if_then_else1() {
+fn test_if_then_else_1() {
     let sk = Block(vec![
         IfThenElse(b::nateq(n::var("x"), n::konst(2371)),
             Box::new(Fail),
@@ -83,10 +81,60 @@ fn test_if_then_else_2() {
     };
     let fail_cases = symbolic_execute(&simple_fun);
     assert_eq!(fail_cases.len(), 1);
-    let fail_case = &fail_cases[0];
-    let x = *fail_case.get("x").unwrap();
-    let y = *fail_case.get("y").unwrap();
+    let x = *fail_cases[0].get("x").unwrap();
+    let y = *fail_cases[0].get("y").unwrap();
     assert!(x > 0 && x < 10000);
     assert!(y > 0);
     assert_eq!(x*x, y+6);
+}
+
+// any_all D1 D2
+//  forall f :: D2 . exists x :: D1 . P(f, x)
+fn any_all<T>(v: &Vec<T>, f: Vec<Box<Fn(&T)->bool>>) -> bool
+{
+    f.into_iter().all(|f| {
+        v.iter().any(f)
+    })
+}
+
+#[test]
+fn test_if_then_else_3() {
+    let sk = Block(vec![
+        IfThenElse(b::and(b::natgt(n::var("x"), n::konst(0)), b::natlt(n::var("x"), n::konst(10000))),
+            Box::new(Fail),
+            Box::new(Skip)),
+        IfThenElse(b::and(b::natgt(n::var("y"), n::konst(0)), b::natlt(n::var("y"), n::konst(10000))),
+            Box::new(Fail),
+            Box::new(Skip)),
+        Assign(Variable("x"), n::add(n::var("x"), n::konst(10000))),
+        IfThenElse(b::and(b::natgt(n::var("x"), n::konst(0)), b::natlt(n::var("x"), n::konst(10000))),
+            Box::new(Fail),
+            Box::new(Skip)),
+    ]);
+    let simple_fun = Function {
+        params: vec![Variable("x"), Variable("y")],
+        body: s::make(&sk, Weak::new(), Weak::new())
+    };
+    let fail_cases = symbolic_execute(&simple_fun);
+    assert!(fail_cases.len() == 3);
+    println!("{:#?}", fail_cases);
+
+    assert!(any_all(&fail_cases, vec![
+        Box::new(|fail_case| {
+            let x = *fail_case.get("x").unwrap();
+            let y = *fail_case.get("y").unwrap();
+            x > 0 && x < 10000
+        }),
+        Box::new(|fail_case| {
+            let x = *fail_case.get("x").unwrap();
+            let y = *fail_case.get("y").unwrap();
+            (x == 0 || x >= 10000) && y > 0 && y < 10000
+        }),
+        Box::new(|fail_case| {
+            let x = *fail_case.get("x").unwrap();
+            let y = *fail_case.get("y").unwrap();
+            (x == 0 || x >= 10000) && (y == 0 || y >= 10000) &&
+            x.wrapping_add(10000) < 10000
+        }),
+    ]));
 }

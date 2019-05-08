@@ -10,19 +10,19 @@ use crate::lang::NatExpr as n;
 use crate::lang::BoolExpr as b;
 
 
-type ConstraintSet<'ctx> = Vec<Rc<z3::Ast<'ctx>>>;
+pub type ConstraintSet<'ctx> = Vec<Rc<z3::Ast<'ctx>>>;
 
-type StateSet<'ctx, 'stmt> = Vec<State<'ctx, 'stmt>>;
+pub type StateSet<'ctx, 'stmt> = Vec<State<'ctx, 'stmt>>;
 
-type FailCase = HashMap<&'static str, u32>;
+pub type FailCase = HashMap<&'static str, u32>;
 
-type FailCaseSet = Vec<FailCase>;
+pub type FailCaseSet = Vec<FailCase>;
 
-type AbstractHeap<'ctx> = HashMap<&'static str, Rc<z3::Ast<'ctx>>>;
+pub type AbstractHeap<'ctx> = HashMap<&'static str, Rc<z3::Ast<'ctx>>>;
 // possibly no builtin. use 3rd party
 
 #[derive(Clone)]
-struct State<'ctx, 'stmt> {
+pub struct State<'ctx, 'stmt> {
     heap: AbstractHeap<'ctx>,
     conds: ConstraintSet<'ctx>,
     pc: Rc<Stmt<'stmt>>,
@@ -108,25 +108,27 @@ fn evaluate_bool<'ctx>(expr: &BoolExpr, heap: &AbstractHeap<'ctx>, ctx: &'ctx z3
     }
 }
 
-fn get_fail_fail_cases<'ctx>(s: State<'ctx, '_>, ctx: &'ctx z3::Context) -> FailCaseSet {
+fn get_fail_fail_cases<'ctx>(s: State<'ctx, '_>, ctx: &'ctx z3::Context, f: &Function) -> FailCaseSet {
     let solver = z3::Solver::new(ctx);
     for c in s.conds.iter() { solver.assert(c); }
     if ! solver.check() { return vec![]; }
     let model = solver.get_model();
 
-    let fc: FailCase = s.heap.iter()
-        .map(|(&k, v)| (k, model.eval(&v).unwrap().as_u64().unwrap() as u32))
+    let fc: FailCase = f.params.iter()
+        .map(|Variable(param_name)| (*param_name, model.eval(&ctx.named_bitvector_const(param_name, 32)).unwrap().as_u64().unwrap() as u32))
         .collect();
 
     vec![ fc ]
 }
 
-fn explore_state<'ctx, 'stmt>(mut s: State<'ctx, 'stmt>, ctx: &'ctx z3::Context) -> (StateSet<'ctx, 'stmt>, FailCaseSet) {
+fn explore_state<'ctx, 'stmt>(mut s: State<'ctx, 'stmt>, ctx: &'ctx z3::Context, f: &Function<'stmt>)
+    -> (StateSet<'ctx, 'stmt>, FailCaseSet)
+{
     use StmtKind::*;
     use NextStmtResult::*;
 
     if let Fail = &s.pc.kind {
-        return (Vec::new(), get_fail_fail_cases(s, ctx));
+        return (Vec::new(), get_fail_fail_cases(s, ctx, f));
     }
 
     match next_stmt(&s.pc) {
@@ -136,6 +138,7 @@ fn explore_state<'ctx, 'stmt>(mut s: State<'ctx, 'stmt>, ctx: &'ctx z3::Context)
             match &s.pc.kind {
                 IfThenElse(cond, ..) => {
                     let mut s2 = s.clone();
+                    println!("forking on {:?}", cond);
                     let cond = evaluate_bool(cond, &s.heap, ctx);
                     s2.conds.push(Rc::new(cond.not()));
                     s2.pc = false_cl;
@@ -180,7 +183,7 @@ pub fn symbolic_execute(f: &Function) -> FailCaseSet {
 
     while !states.is_empty() {
         let cand = select_state(&mut states);
-        let (new_states, mut new_fail_cases) = explore_state(cand, &ctx);
+        let (new_states, mut new_fail_cases) = explore_state(cand, &ctx, f);
         append_state(&mut states, new_states);
         fail_cases.append(&mut new_fail_cases);
     }
