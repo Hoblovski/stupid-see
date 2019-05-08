@@ -128,9 +128,9 @@ fn get_fail_cases<'ctx>(s: State<'ctx, '_>, ctx: &'ctx z3::Context, f: &Function
         .map(|Variable(param_name)| (*param_name, model.eval(&ctx.named_bitvector_const(param_name, 32)).unwrap().as_u64().unwrap() as u32))
         .collect();
 
-    println!("heap at fail case: {:#?}", &s.heap.iter()
-        .map(|(&name, val)| (name, model.eval(&val).unwrap().as_u64().unwrap() as u32))
-        .collect::<FailCase>());
+//    println!("heap at fail case: {:#?}", &s.heap.iter()
+//        .map(|(&name, val)| (name, model.eval(&val).unwrap().as_u64().unwrap() as u32))
+//        .collect::<FailCase>());
 
     vec![ fc ]
 }

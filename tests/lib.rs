@@ -1,5 +1,5 @@
 use std::rc::Weak;
-use std::collections::HashMap;
+
 
 extern crate stupid_see;
 use stupid_see::lang::*;
@@ -122,7 +122,7 @@ fn test_if_then_else_3() {
     assert!(any_all(&fail_cases, vec![
         Box::new(|fail_case| {
             let x = *fail_case.get("x").unwrap();
-            let y = *fail_case.get("y").unwrap();
+            let _y = *fail_case.get("y").unwrap();
             x > 0 && x < 10000
         }),
         Box::new(|fail_case| {
@@ -220,6 +220,10 @@ fn test_while_1() {
         body: s::make(&sk, Weak::new(), Weak::new())
     };
     let fail_cases = symbolic_execute(&simple_fun);
+    println!("symbolically executed function:\n");
+    println!("{}\n", simple_fun);
+    println!("fail cases i.e. inputs leading to assertion violation:");
+    println!("{:?}", fail_cases);
 
     assert!(fail_cases.is_empty());
 }
@@ -249,6 +253,10 @@ fn test_while_2() {
     };
     let fail_cases = symbolic_execute(&simple_fun);
 
+    println!("symbolically executed function:\n");
+    println!("{}\n", simple_fun);
+    println!("fail cases i.e. inputs leading to assertion violation:");
+    println!("{:?}", fail_cases);
     assert!(fail_cases.len() == 4);
     assert!(any_all(&fail_cases, vec![
         Box::new(|fail_case| {

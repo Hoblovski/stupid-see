@@ -6,7 +6,7 @@ use stupid_see::lang::StmtKind::*;
 use stupid_see::lang::Stmt as s;
 use stupid_see::lang::NatExpr as n;
 use stupid_see::lang::BoolExpr as b;
-use stupid_see::executor::symbolic_execute;
+
 
 fn main() {
     let sk = Block(vec![
@@ -28,6 +28,7 @@ fn main() {
         params: vec![Variable("n")],
         body: s::make(&sk, Weak::new(), Weak::new())
     };
-    let fail_cases = symbolic_execute(&simple_fun);
-    println!("fail cases:\n{:#?}", fail_cases);
+    println!("{}", simple_fun);
+//    let fail_cases = symbolic_execute(&simple_fun);
+//    println!("fail cases:\n{:#?}", fail_cases);
 }

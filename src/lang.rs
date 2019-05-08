@@ -7,6 +7,8 @@ use std::rc::{Rc, Weak};
 use std::boxed::Box;
 use std::cell::RefCell;
 
+use std::fmt;
+
 /// Wraps a variable.
 /// Variables are unique w.r.t. their names, which is currently represented as &'static str's.
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -43,6 +45,20 @@ impl NatExpr {
     }
     pub fn rem(a: NatExpr, b: NatExpr) -> NatExpr {
         NatExpr::Rem(Box::new(a), Box::new(b))
+    }
+}
+
+impl fmt::Display for NatExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use NatExpr::*;
+        match self {
+            Add(box e1, box e2) => write!(f, "{} + {}", e1, e2),
+            Sub(box e1, box e2) => write!(f, "{} - {}", e1, e2),
+            Mul(box e1, box e2) => write!(f, "({}) * ({})", e1, e2),
+            Rem(box e1, box e2) => write!(f, "({}) % ({})", e1, e2),
+            Const(v) => write!(f, "{}", v),
+            Var(Variable(name)) => write!(f, "{}", name),
+        }
     }
 }
 
@@ -84,6 +100,20 @@ impl BoolExpr {
     }
 }
 
+impl fmt::Display for BoolExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use BoolExpr::*;
+        match self {
+            NatEq(e1, e2) => write!(f, "{} == {}", e1, e2),
+            NatLe(e1, e2) => write!(f, "{} <= {}", e1, e2),
+            NatLt(e1, e2) => write!(f, "{} < {}", e1, e2),
+            Neg(e1) => write!(f, "not {}", e1),
+            And(e1, e2) => write!(f, "{} and {}", e1, e2),
+            Or(e1, e2) => write!(f, "{} or {}", e1, e2),
+        }
+    }
+}
+
 /// The program statements.
 ///
 /// Should look like the AST definition.
@@ -97,6 +127,43 @@ pub enum StmtKind {
     IfThenElse(BoolExpr, Box<StmtKind>, Box<StmtKind>),
     DeclNatVar(Variable),
     While(BoolExpr, Box<StmtKind>),
+}
+
+impl StmtKind {
+    const indent_char: &'static str = "  ";
+
+    fn indented_display(&self, indent_level: usize) -> String {
+        let indent = StmtKind::indent_char.repeat(indent_level);
+        match self {
+            IfThenElse(cond, box Fail, box Skip) =>
+                format!("{}assert not {}", indent, cond),
+            IfThenElse(cond, box Skip, box Fail) =>
+                format!("{}assert {}", indent, cond),
+            Assign(Variable(name), rhs) =>
+                format!("{}{} := {}", indent, name, rhs),
+            Block(v) =>
+                v.iter().map(|x| x.indented_display(indent_level)).collect::<Vec<_>>().join("\n"),
+            Skip =>
+                format!("{}skip", indent),
+            Fail =>
+                format!("{}fail", indent),
+            DeclNatVar(Variable(name)) =>
+                format!("{}var {}", indent, name),
+            IfThenElse(cond, s1, s2) =>
+                format!("{}if {} then\n{}\n{}else\n{}", indent, cond,
+                        s1.indented_display(indent_level + 1),
+                        indent, s2.indented_display(indent_level + 1)),
+            While(cond, s) =>
+                format!("{}while {} do\n{}", indent, cond, s.indented_display(indent_level + 1)),
+            _ => format!("S"),
+        }
+    }
+}
+
+impl fmt::Display for StmtKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.indented_display(1))
+    }
 }
 
 /// Structured statements -- 'linked'.
@@ -210,7 +277,15 @@ pub struct Function<'stmt> {
     pub body: Rc<Stmt<'stmt>>,
 }
 
-
+impl<'stmt> fmt::Display for Function<'stmt> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "function {}\n{}",
+            self.params.iter()
+            .map(|Variable(name)| format!("({})", *name)).collect::<Vec<_>>()
+            .join(", "),
+            self.body.kind)
+    }
+}
 
 #[cfg(test)]
 mod tests {
